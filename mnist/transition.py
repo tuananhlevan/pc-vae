@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-from mnist.model import PC_VAE # Ensure this imports your saved model
+from model import PC_VAE # Ensure this imports your saved model
 
 def plot_transition(model_path='checkpoints/pc_vae_mnist.pth'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from mnist.model import PC_VAE
+from model import PC_VAE
 
 def sample_from_pc_prior(pc_prior, num_samples, device):
     """

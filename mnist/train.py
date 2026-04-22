@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from mnist.model import PC_VAE, pc_vae_loss # Assuming previous code is in model.py
+from model import PC_VAE, pc_vae_loss # Assuming previous code is in model.py
 import os
 
 def train():
