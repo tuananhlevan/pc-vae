@@ -124,6 +124,38 @@ class VQVAE(nn.Module):
         x_recon = self.decoder(z_q)
         return x_recon, vq_loss, indices
 
+class PatchGANDiscriminator(nn.Module):
+    def __init__(self, in_channels=3, ndf=64):
+        super().__init__()
+        # 32x32 -> 16x16
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(in_channels, ndf, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2, True)
+        )
+        # 16x16 -> 8x8
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, True)
+        )
+        # # 8x8 -> 8x8
+        # self.layer3 = nn.Sequential(
+        #     nn.Conv2d(ndf * 2, ndf * 4, kernel_size=3, stride=1, padding=1, bias=False),
+        #     nn.BatchNorm2d(ndf * 4),
+        #     nn.LeakyReLU(0.2, True)
+        # )
+        # # Output layer: 8x8 -> 8x8 single channel prediction map
+        # self.layer4 = nn.Conv2d(ndf * 4, 1, kernel_size=3, stride=1, padding=1)
+        self.layer3 = nn.Conv2d(ndf * 2, 1, kernel_size=3, stride=1, padding=1)
+        
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        # return self.layer4(x)
+        return x
+
+# ========= Latent Probabilistic Circuit =========
 def build_discrete_hclt_prior(latent_data, num_cats=512, device='cuda'):
     """
     Constructs the HCLT Prior specifically for DISCRETE Categorical tokens.

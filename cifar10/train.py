@@ -6,12 +6,35 @@ from torchvision import datasets, transforms
 import os
 import lpips 
 
-from model import VQVAE, build_discrete_hclt_prior
+from model import VQVAE, build_discrete_hclt_prior, PatchGANDiscriminator
 
-def train_vqvae(device, batch_size=128, epochs=100):
-    print("\n--- PHASE 1: Training VQ-VAE ---")
+# --- Hinge Losses ---
+def hinge_d_loss(logits_real, logits_fake):
+    loss_real = torch.mean(F.relu(1. - logits_real))
+    loss_fake = torch.mean(F.relu(1. + logits_fake))
+    return 0.5 * (loss_real + loss_fake)
+
+def hinge_g_loss(logits_fake):
+    return -torch.mean(logits_fake)
+
+def calculate_adaptive_weight(loss_l1, loss_g, last_layer_weight):
+    # Get the gradients of the L1 and GAN loss with respect to the last layer
+    l1_grads = torch.autograd.grad(loss_l1, last_layer_weight, retain_graph=True)[0]
+    g_grads = torch.autograd.grad(loss_g, last_layer_weight, retain_graph=True)[0]
+    
+    # Calculate the norm of the gradients
+    d_weight = torch.norm(l1_grads) / (torch.norm(g_grads) + 1e-4)
+    d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
+    return d_weight
+
+def train_vqvae(device, batch_size=128, epochs=200, disc_start_epoch=20):
+    print("\n--- PHASE 1: Training VQ-VAE (with Discriminator) ---")
     model = VQVAE(num_embeddings=128, embedding_dim=64).to(device)
+    discriminator = PatchGANDiscriminator().to(device) # NEW: Initialize Discriminator
+    
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    opt_disc = optim.Adam(discriminator.parameters(), lr=1e-3) # NEW: Discriminator Optimizer
+    
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
     loss_fn_vgg = lpips.LPIPS(net='vgg').to(device)
     
@@ -22,8 +45,14 @@ def train_vqvae(device, batch_size=128, epochs=100):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
+        total_d_loss = 0 # NEW: Track D Loss
+        
         for x, _ in loader:
             x = x.to(device)
+            
+            # ==============================================================
+            # 1. Train Generator (VQ-VAE)
+            # ==============================================================
             optimizer.zero_grad()
             
             x_recon, vq_loss, _ = model(x)
@@ -31,18 +60,49 @@ def train_vqvae(device, batch_size=128, epochs=100):
             loss_l1 = F.l1_loss(x_recon, x)
             loss_lpips = loss_fn_vgg(x_recon * 2.0 - 1.0, x * 2.0 - 1.0).mean()
             
-            # Combined Loss
-            loss = loss_l1 + (0.5 * loss_lpips) + vq_loss
+            # Adversarial Loss (Activates after warmup)
+            if epoch >= disc_start_epoch:
+                logits_fake = discriminator(x_recon)
+                loss_g = hinge_g_loss(logits_fake)
+                
+                last_layer = model.decoder[-2].weight 
+                adaptive_gan_weight = calculate_adaptive_weight(loss_l1, loss_g, last_layer)
+                
+                loss = loss_l1 + (0.25 * loss_lpips) + vq_loss + (adaptive_gan_weight * loss_g)
+            else:
+                loss_g = torch.tensor(0.0).to(device)
+                loss = loss_l1 + (0.25 * loss_lpips) + vq_loss
+            
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
+            
+            # ==============================================================
+            # 2. Train Discriminator
+            # ==============================================================
+            if epoch >= disc_start_epoch:
+                opt_disc.zero_grad()
+                
+                # Detach x_recon so gradients don't flow back into the Generator
+                logits_real = discriminator(x.detach())
+                logits_fake = discriminator(x_recon.detach())
+                
+                d_loss = hinge_d_loss(logits_real, logits_fake)
+                d_loss.backward()
+                opt_disc.step()
+                total_d_loss += d_loss.item()
         
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
 
-        print(f"Epoch [{epoch+1}/{epochs}] | LR: {current_lr:.6f} | VQ-VAE Loss: {total_loss/len(loader):.4f}")
+        # Calculate average losses for printing
+        avg_g_loss = total_loss / len(loader)
+        avg_d_loss = total_d_loss / len(loader) if epoch >= disc_start_epoch else 0.0
+        
+        print(f"Epoch [{epoch+1}/{epochs}] | LR: {current_lr:.6f} | G Loss: {avg_g_loss:.4f} | D Loss: {avg_d_loss:.4f}")
 
     torch.save(model.state_dict(), 'checkpoints/vqvae_stage1.pth')
+    torch.save(discriminator.state_dict(), 'checkpoints/discriminator_stage1.pth') # Optional: save discriminator
     print("Phase 1 Complete. VQ-VAE Saved.")
 
 def extract_discrete_latents(device):
@@ -68,7 +128,7 @@ def extract_discrete_latents(device):
     print(f"Active Tokens Used: {len(torch.unique(latents))}/128")
     print(f"Phase 2 Complete. {latents.shape[0]} Discrete Maps Saved.")
 
-def train_discrete_pc(device, epochs=100):
+def train_discrete_pc(device, epochs=200):
     print("\n--- PHASE 3: Training Exact Categorical HCLT ---")
     data = torch.load('checkpoints/cifar10_discrete_latents.pt', map_location='cpu')
     latents = data['latents'].view(-1, 64) # Shape: [50000, 64]

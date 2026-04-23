@@ -9,7 +9,7 @@ from tqdm import tqdm
 from model import VQVAE
 
 # --- ADDED: Visualization Function ---
-def visualize_reconstructions(real_imgs, recon_imgs, num_images=8, filename="reconstruction_comparison.png"):
+def visualize_reconstructions(real_imgs, recon_imgs, num_images=8, filename="assets/reconstruction_comparison.png"):
     """Saves and displays a grid comparing real and reconstructed images."""
     print("Generating visualization...")
     # Cap the number of images to display
@@ -35,7 +35,7 @@ def visualize_reconstructions(real_imgs, recon_imgs, num_images=8, filename="rec
     plt.axis('off')
     plt.title('Top Row: Original Real Images  |  Bottom Row: VQ-VAE Reconstructions', fontsize=14, pad=15)
     plt.tight_layout()
-    plt.savefig("assets" + filename, bbox_inches='tight')
+    plt.savefig(filename, bbox_inches='tight')
     print(f"Saved visual comparison to '{filename}'")
 # -------------------------------------
 
