@@ -8,6 +8,8 @@ import lpips
 
 from model import VQVAE, build_discrete_hclt_prior, PatchGANDiscriminator
 
+torch.manual_seed(42)
+
 # --- Hinge Losses ---
 def hinge_d_loss(logits_real, logits_fake):
     loss_real = torch.mean(F.relu(1. - logits_real))
@@ -27,13 +29,16 @@ def calculate_adaptive_weight(loss_l1, loss_g, last_layer_weight):
     d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
     return d_weight
 
-def train_vqvae(device, batch_size=128, epochs=200, disc_start_epoch=20):
+def train_vqvae(device, batch_size=128, epochs=500, disc_start_epoch=50):
     print("\n--- PHASE 1: Training VQ-VAE (with Discriminator) ---")
     model = VQVAE(num_embeddings=128, embedding_dim=64).to(device)
     discriminator = PatchGANDiscriminator().to(device) # NEW: Initialize Discriminator
     
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    opt_disc = optim.Adam(discriminator.parameters(), lr=1e-3) # NEW: Discriminator Optimizer
+    # Keep the Generator fast so it can aggressively search for better textures
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, betas=(0.5, 0.9))
+
+    # Handicap the Discriminator to be 4x to 5x slower
+    opt_disc = optim.Adam(discriminator.parameters(), lr=5e-4, betas=(0.5, 0.9))
     
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
     loss_fn_vgg = lpips.LPIPS(net='vgg').to(device)
@@ -128,7 +133,7 @@ def extract_discrete_latents(device):
     print(f"Active Tokens Used: {len(torch.unique(latents))}/128")
     print(f"Phase 2 Complete. {latents.shape[0]} Discrete Maps Saved.")
 
-def train_discrete_pc(device, epochs=200):
+def train_discrete_pc(device, epochs=100):
     print("\n--- PHASE 3: Training Exact Categorical HCLT ---")
     data = torch.load('checkpoints/cifar10_discrete_latents.pt', map_location='cpu')
     latents = data['latents'].view(-1, 64) # Shape: [50000, 64]
